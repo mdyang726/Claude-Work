@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Council Report — Rocket Design Sequencing</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: #f9f9f8; color: #1a1a1a; line-height: 1.6; }
+  .header { background: #1a1a1a; color: #fff; padding: 36px 48px; }
+  .header .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #888; margin-bottom: 10px; }
+  .header h1 { font-size: 22px; font-weight: 600; max-width: 700px; }
+  .header .meta { font-size: 13px; color: #888; margin-top: 10px; }
+  .container { max-width: 860px; margin: 0 auto; padding: 40px 48px; }
+
+  /* Verdict */
+  .verdict { background: #fff; border: 1px solid #e5e5e5; border-radius: 8px; padding: 32px; margin-bottom: 32px; }
+  .verdict .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #888; margin-bottom: 20px; }
+  .verdict-block { margin-bottom: 28px; }
+  .verdict-block:last-child { margin-bottom: 0; }
+  .verdict-block h2 { font-size: 14px; font-weight: 700; color: #1a1a1a; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 2px solid #f0f0f0; }
+  .verdict-block p { font-size: 14px; color: #333; margin-bottom: 10px; }
+  .verdict-block p:last-child { margin-bottom: 0; }
+
+  /* One thing */
+  .one-thing { background: #1a1a1a; color: #fff; border-radius: 8px; padding: 28px 32px; margin-bottom: 32px; }
+  .one-thing .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #888; margin-bottom: 12px; }
+  .one-thing p { font-size: 15px; line-height: 1.65; color: #f0f0f0; }
+
+  /* Alignment grid */
+  .alignment { background: #fff; border: 1px solid #e5e5e5; border-radius: 8px; padding: 28px 32px; margin-bottom: 32px; }
+  .alignment h3 { font-size: 13px; font-weight: 700; color: #1a1a1a; margin-bottom: 16px; }
+  .advisor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .advisor-card { border-radius: 6px; padding: 12px 14px; }
+  .advisor-card .name { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+  .advisor-card .stance { font-size: 12px; color: #555; }
+  .agree { background: #f0faf0; border-left: 3px solid #4caf50; }
+  .partial { background: #fff8f0; border-left: 3px solid #ff9800; }
+
+  /* Peer review summary */
+  .peer-summary { background: #fff; border: 1px solid #e5e5e5; border-radius: 8px; padding: 28px 32px; margin-bottom: 32px; }
+  .peer-summary h3 { font-size: 13px; font-weight: 700; margin-bottom: 14px; color: #1a1a1a; }
+  .peer-row { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 10px; font-size: 13px; color: #444; }
+  .peer-row .badge { flex-shrink: 0; background: #f0f0f0; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: 600; color: #555; margin-top: 2px; }
+
+  /* Collapsible advisors */
+  .collapsibles { margin-bottom: 32px; }
+  .collapsibles h3 { font-size: 13px; font-weight: 700; color: #1a1a1a; margin-bottom: 14px; }
+  details { background: #fff; border: 1px solid #e5e5e5; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+  summary { padding: 14px 20px; font-size: 13px; font-weight: 600; cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; color: #1a1a1a; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; font-size: 16px; color: #aaa; }
+  details[open] summary::after { content: "−"; }
+  details[open] summary { border-bottom: 1px solid #f0f0f0; }
+  .advisor-body { padding: 18px 20px; font-size: 13px; color: #444; line-height: 1.7; }
+  .tag { display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; border-radius: 3px; padding: 2px 7px; margin-left: 10px; font-weight: 600; }
+  .tag-strongest { background: #e8f5e9; color: #2e7d32; }
+  .tag-caution { background: #fff3e0; color: #e65100; }
+
+  .footer { text-align: center; font-size: 12px; color: #aaa; padding: 32px 0 48px; border-top: 1px solid #e5e5e5; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="label">LLM Council Report · June 5, 2026</div>
+  <h1>Is preliminary design → OpenRocket → electronics the right starting sequence for this rocket project?</h1>
+  <div class="meta">5 advisors · 4 peer reviews · 1 chairman synthesis</div>
+</div>
+
+<div class="container">
+
+  <!-- ONE THING FIRST -->
+  <div class="one-thing">
+    <div class="label">The One Thing to Do First</div>
+    <p>Write the terminal phase simulation script today — a single Python file, under 100 lines — that takes descent velocity, detection altitude, and a latency budget (sensor + compute + igniter + spool) as inputs and outputs the residual ignition window under worst-case assumptions. Do not open OpenRocket. Do not finalize the BOM. Do not design the gimbal. That number either unlocks the project or forces a redesign, and you need to know which one it is before June ends.</p>
+  </div>
+
+  <!-- VERDICT -->
+  <div class="verdict">
+    <div class="section-label">Chairman's Verdict</div>
+
+    <div class="verdict-block">
+      <h2>Where the Council Agrees</h2>
+      <p>All five advisors converge on the same core verdict: the terminal phase simulation must happen before anything else, and the proposed sequence is wrong for burying it. The agreement is not just sequencing preference — it is unanimous that this single script is the load-bearing calculation that either validates or kills the architecture. Every downstream decision (sensor selection, polling rate, state machine thresholds, leg deployment timing) has a hard dependency on that number.</p>
+      <p>The council also agrees that the TVC gimbal is the true critical-path item and that mechanical iteration must begin no later than week 2, because first-time 3D-printed gimbals require multiple revision cycles and PID tuning is not a two-week task.</p>
+    </div>
+
+    <div class="verdict-block">
+      <h2>Where the Council Clashes</h2>
+      <p>The one genuine tension is between The Expansionist and the rest of the council on framing. The Expansionist treats the ignition window as a solved constraint and pivots to upside: parallelizing OpenRocket with electronics bring-up, publishable data, conference-quality work. The other four treat the window as an open feasibility question that must be answered before any of that matters. A builder reading the Expansionist might treat the sim as productive enrichment. A builder reading the others understands it is a go/no-go before a single part ships. The peer reviews called this out four times independently.</p>
+      <p>There is also a secondary tension on parallelism. The Expansionist and the Outsider recommend running OpenRocket in parallel with electronics bring-up. The First Principles Thinker implicitly disagrees — OpenRocket is downstream of the terminal phase sim because the descent profile is an input, not an output, of OpenRocket for this use case. The Outsider is correct that gimbal mechanical build has zero dependencies on the sim and can run in parallel with it. OpenRocket cannot.</p>
+    </div>
+
+    <div class="verdict-block">
+      <h2>Blind Spots the Council Caught</h2>
+      <p><strong>F-class motor ignition jitter is not a mean-value problem.</strong> The simulation can model expected ignition delay, but Estes motors have a tail distribution on ignition latency across units. A unit that fires 80ms late eats a third of the best-case window. The architecture needs to be stress-tested against worst-case ignition delay from a real sample distribution, not just the nominal spec.</p>
+      <p><strong>Motor reliability under flight conditions was never questioned.</strong> Vibration, G-loading, and potential moisture affect pass rate. A motor that lights reliably on a bench is not guaranteed to light reliably under the dynamic conditions of a terminal descent.</p>
+      <p><strong>Motor availability and lead time.</strong> Estes F-class motors are hobby-retail items with inconsistent stock. Order motors on day one, before the simulation even finishes running.</p>
+    </div>
+
+    <div class="verdict-block">
+      <h2>The Recommendation</h2>
+      <p>The proposed sequence is wrong and should be discarded. The correct sequence:</p>
+      <p><strong>1. Terminal phase sim — day one.</strong> Run with worst-case latency values stacked: BMP388 at its slowest oversampling setting, Teensy interrupt-to-output latency, igniter delay at the 90th percentile, motor spool time. If the residual window is positive with margin, proceed. If it is negative or inside noise, the sensor stack, the detection altitude, or the motor selection must change before a single component is ordered.</p>
+      <p><strong>2. Order motors immediately</strong> — in parallel with writing the simulation. Stock risk is real and silent.</p>
+      <p><strong>3. TVC gimbal physical build begins week 2</strong>, not after electronics integration. It runs in parallel with everything else — no upstream dependencies except gimbal geometry, already constrained by the motor mount.</p>
+      <p><strong>4. OpenRocket runs after the terminal phase sim</strong> confirms the descent profile, because the ascent model must be consistent with what the landing motor must deliver.</p>
+      <p><strong>5. Electronics integration</strong> (IMU, barometer, flight computer) comes after the sim validates polling rate and state machine timing requirements — those requirements flow from the sim output.</p>
+    </div>
+  </div>
+
+  <!-- ALIGNMENT GRID -->
+  <div class="alignment">
+    <h3>Advisor Alignment</h3>
+    <div class="advisor-grid">
+      <div class="advisor-card agree">
+        <div class="name">The Contrarian</div>
+        <div class="stance">Sim is a go/no-go gate. BMP388 latency alone can kill the window. Start today.</div>
+      </div>
+      <div class="advisor-card agree">
+        <div class="name">The First Principles Thinker</div>
+        <div class="stance">Ignition window is a feasibility question, not a design preference. May be physically impossible.</div>
+      </div>
+      <div class="advisor-card partial">
+        <div class="name">The Expansionist</div>
+        <div class="stance">Agrees sim is first — but frames it as opportunity. Softens urgency. Parallel paths partially wrong.</div>
+      </div>
+      <div class="advisor-card agree">
+        <div class="name">The Outsider</div>
+        <div class="stance">Waterfall trap. Sim is the interface contract. Gimbal can parallel-path with sim.</div>
+      </div>
+      <div class="advisor-card agree">
+        <div class="name">The Executor</div>
+        <div class="stance">Sim is day-one. Gimbal starts week 2. Slipping TVC past week 6 = one-shot gamble.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PEER REVIEW SUMMARY -->
+  <div class="peer-summary">
+    <h3>Peer Review Highlights</h3>
+    <div class="peer-row"><span class="badge">4/4</span> Reviewers named The First Principles Thinker as the strongest response — the only one that frames the ignition window as a binary feasibility gate with explicit arithmetic.</div>
+    <div class="peer-row"><span class="badge">4/4</span> Reviewers flagged The Expansionist as having the biggest blind spot — softening a hard go/no-go into opportunity framing.</div>
+    <div class="peer-row"><span class="badge">Blind spot</span> Motor ignition jitter: tail distribution across units, not just mean delay — none of the five advisors raised this.</div>
+    <div class="peer-row"><span class="badge">Blind spot</span> Motor re-ignition reliability under flight conditions (vibration, G-load, moisture) — unquestioned by all five.</div>
+    <div class="peer-row"><span class="badge">Blind spot</span> Motor stock availability — order on day one regardless of sim status.</div>
+  </div>
+
+  <!-- ADVISOR RESPONSES -->
+  <div class="collapsibles">
+    <h3>Full Advisor Responses</h3>
+
+    <details>
+      <summary>The Contrarian <span class="tag">Agrees with consensus</span></summary>
+      <div class="advisor-body">
+        The proposed sequence is backwards in a way that matters. The builder lists "preliminary design + component list" as step one, but that's not actually first — it's already been done. The architecture is locked: Teensy 4.0, BMP388, F-class motors, TVC gimbal, spring legs. The sequence being debated is a fiction. The real question is what to validate <em>now</em> before the hardware assumptions harden into sunk cost.<br><br>
+        The BMP388 at standard configuration has 40–180ms response latency depending on oversampling settings. That alone can eat half the margin before you account for IMU fusion, state estimation, and ignition circuit delay. The critical path risk isn't TVC gimbal slipping past week 6. It's discovering in week 7 that the ignition timing assumption was wrong and the sensor stack can't close the loop in time. That's not a schedule problem. That's a redesign.<br><br>
+        Run the terminal phase sim first. Today. Before touching OpenRocket.
+      </div>
+    </details>
+
+    <details>
+      <summary>The First Principles Thinker <span class="tag tag-strongest">Strongest (4/4 reviewers)</span></summary>
+      <div class="advisor-body">
+        The 200–400ms ignition window is not a design preference — it is a physical constraint derived from kinematics. At 12 m/s descent and 3m altitude, you have roughly 250ms of total time before ground contact. That number, minus sensor latency, minus compute latency, minus igniter delay, minus motor spool time, determines whether this project is physically possible at all with Estes F-class motors.<br><br>
+        The BMP388 has a configurable ODR; at 50Hz you get 20ms per sample. The Teensy 4.0 interrupt-to-output latency is measurable but non-zero. Estes igniters have statistical ignition delay distributions, not point values. F-class motors have non-negligible spool time before meaningful thrust. Stack those numbers. If the residual window is negative or inside measurement noise, the architecture is dead on first principles — no amount of TVC tuning rescues it.<br><br>
+        Correct sequence: kinematic feasibility calculation → latency budget derivation → component selection constrained by that budget → OpenRocket → hardware build.
+      </div>
+    </details>
+
+    <details>
+      <summary>The Expansionist <span class="tag tag-caution">Biggest blind spot (4/4 reviewers)</span></summary>
+      <div class="advisor-body">
+        The OpenRocket step is fine but it should run <em>in parallel</em> with electronics bring-up, not sequentially before it. Gimbal fabrication and PID loop development on a test stand can start as early as week 2. The week-6 TVC deadline is only safe if mechanical iteration starts immediately — 3D-printed gimbals almost always need 2–3 revision cycles.<br><br>
+        The biggest opportunity: this project generates genuinely publishable data on a shoestring budget. If the simulation is rigorous and the flight log is clean, this is conference-quality work for a high schooler. That only happens if the sim is the foundation, not an afterthought dressed up as step one.<br><br>
+        <em>Note: Peer reviewers flagged that framing the sim as an "opportunity" softens what should be a hard go/no-go gate. Also, OpenRocket outputs depend on the terminal phase sim — they cannot truly run in parallel.</em>
+      </div>
+    </details>
+
+    <details>
+      <summary>The Outsider <span class="tag">Agrees with consensus</span></summary>
+      <div class="advisor-body">
+        The proposed sequence has a classic waterfall trap baked into it: three sequential phases before you touch real hardware, with the critical-path item (TVC gimbal + PID) sitting at the end of a dependency chain. Every week spent on OpenRocket modeling is a week you're not discovering that your gimbal servo has 40ms latency, or that your Teensy's interrupt handling hiccups under sensor fusion load.<br><br>
+        The terminal phase simulation script is your interface contract. In distributed systems, you define the API before you build the services. That script defines the timing budget, which defines the sensor polling rate, which defines the firmware architecture, which defines the gimbal response spec. Everything downstream is an implementation of that contract.<br><br>
+        Concrete recommendation: parallel-path the gimbal mechanical build with the simulation script. They have zero dependencies on each other and both feed into PID tuning. Running them sequentially burns two weeks you don't have.
+      </div>
+    </details>
+
+    <details>
+      <summary>The Executor <span class="tag">Agrees with consensus</span></summary>
+      <div class="advisor-body">
+        The terminal phase simulation must be the literal first commit, not a line item in step 1. Every downstream decision has a hard dependency on that number. Motor selection, leg deployment timing, altimeter polling rate, the state machine transition threshold — all of it shifts if the window turns out to be 150ms instead of 350ms.<br><br>
+        The correct sequence: (1) Terminal phase sim — day one, Python, one file, 50 lines. (2) OpenRocket ascent modeling, informed by the landing motor constraints. (3) TVC gimbal physical build starts no later than week 2.<br><br>
+        The critical path warning is underweighted. TVC gimbal plus PID tuning is not a two-week task for a first-time builder. Mechanical slop, motor mount tolerances, and PID oscillation each add days. Week 6 as the hard deadline means the gimbal must be spinning and attitude-stabilizing by week 5 to have any buffer. Build the sim today. Start cutting gimbal parts this week.
+      </div>
+    </details>
+  </div>
+
+</div>
+
+<div class="footer">
+  Council conducted June 5, 2026 · Autonomous Propulsive Landing Model Rocket · 5 advisors · 4 peer reviews
+</div>
+
+</body>
+</html>
