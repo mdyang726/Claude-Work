@@ -8,7 +8,7 @@
 
 A single-stage model rocket that launches, autonomously detects flight conditions via onboard sensors and a 5-state machine, and executes a propulsive vertical landing — no human intervention after ignition. Mirrors SpaceX Falcon 9 booster recovery at hobby scale.
 
-**Builder profile:** High school / early college, strong C++, 3D printer access, ~$500 budget, ~10 weeks (started June 5, 2026).
+**Builder profile:** High school / early college, strong C++, 3D printer access, flexible budget, rapid timeline (started June 5, 2026).
 
 **Target outcome for summer:** At least one documented successful propulsive vertical landing on video.
 
@@ -21,10 +21,10 @@ A single-stage model rocket that launches, autonomously detects flight condition
 | Component | Part |
 |-----------|------|
 | Flight computer | Teensy 4.0 (600MHz Cortex-M7) |
-| Barometer/altimeter | BMP388-class |
-| IMU | TBD (must support 100–200Hz attitude estimation) |
-| Ascent motor | Estes F-class, TVC gimbal (servo + PID) |
-| Landing motor | Estes F-class, 0-sec delay, e-match triggered |
+| IMU | TBD (must support 100–200Hz; used for attitude estimation + double integration altitude) |
+| GPS | Optional — provides absolute altitude cross-check if onboard the Teensy module |
+| Ascent motor | Estes F-class, shared TVC gimbal (servo + PID) |
+| Landing motor | Estes F-class, 0-sec delay, e-match triggered — occupies same gimbal after launch motor ejects |
 | Landing legs | 4× spring-loaded, deployed by flight computer |
 
 ---
@@ -32,12 +32,12 @@ A single-stage model rocket that launches, autonomously detects flight condition
 ## Flight Profile
 
 ```
-Launch → Boost (TVC active, PID attitude control)
-       → Coast (ascending, TVC off)
+Launch → Boost (TVC active, PID attitude control, launch motor)
+       → Coast (ascending, TVC off, launch motor spent and ejected)
        → Apogee (velocity = 0, detected via IMU)
-       → Descent (low-CoM passive stability, no active control)
-       → Ignition trigger (barometer + IMU fusion detects altitude)
-       → Landing burn (legs deploy simultaneously)
+       → Descent (low-CoM passive stability, landing motor pre-staged in gimbal)
+       → Ignition trigger (IMU double integration altitude hits threshold)
+       → Landing burn (landing motor fires in same gimbal, same PID code, legs deploy)
        → Touchdown (legs absorb impact)
 ```
 
@@ -59,12 +59,12 @@ At 30–50ft apogee with ~12 m/s descent, time-to-impact at 3m detection altitud
 
 | Latency source | Conservative estimate |
 |---------------|----------------------|
-| BMP388 update period (OSR×4) | 20ms |
-| Teensy loop cycle (100Hz) | 10ms |
+| IMU read + integration cycle (200Hz) | 5ms |
+| Teensy loop cycle (100–200Hz) | 5–10ms |
 | MOSFET switching | 1ms |
 | E-match ignition | 50ms |
 | Motor spool to meaningful thrust | 50ms |
-| **Total** | **131ms** |
+| **Total** | **~111–116ms** |
 
 Residual window = ~119ms at nominal conditions. This is tight. Architecture is viable but leaves little margin for surprises. All latency terms must be characterized empirically before flight.
 
@@ -74,11 +74,11 @@ Residual window = ~119ms at nominal conditions. This is tight. Architecture is v
 
 ## Key Technical Constraints (Non-Negotiables)
 
-**Sensor fusion is required.** Pure BMP388 at 25Hz is insufficient for the terminal phase. Fuse barometric altitude (absolute reference, noisy short-term) with IMU velocity integration (accurate short-term, drifts long-term).
+**Altitude via IMU double integration.** Integrate vertical acceleration → velocity, integrate again → altitude. Works well over the short terminal phase window (drift is negligible over <2 seconds). Reset the integrator to zero at apogee (a known zero-velocity event) to bound drift over the full flight. GPS onboard gives a free absolute-altitude cross-check if the Teensy module includes it.
 
-**Dual e-match synchronization is a hard go/no-go gate.** Two motors firing >10ms apart = asymmetric thrust at near-zero airspeed where TVC has no authority. Bench-verify to <10ms before any flight.
+**Single gimbal, shared TVC code.** The launch motor ejects at burnout. The landing motor occupies the same gimbal mount. The same PID attitude control block runs both burns — TVC is actively correcting attitude throughout the landing burn, not just during ascent. During the passive descent phase (no motor burning), TVC is inactive and low-CoM passive stability handles attitude.
 
-**TVC has zero authority at landing ignition transient.** At the moment the landing motor fires, airspeed ≈ 0 and dynamic pressure is negligible. TVC cannot correct attitude for the first 100–200ms of the burn. The vehicle must arrive at the ignition point already attitude-stable. The passive descent stability design (low CoM) is what makes or breaks the landing, not TVC.
+**Passive descent stability still required.** From burnout through ignition, there is no active control. The vehicle must arrive at the ignition altitude sufficiently upright for TVC to take over. Low CoM is the correct design for this phase. Quantify the acceptable off-axis envelope and encode it as a hardcoded abort threshold.
 
 **Abort thresholds hardcoded, never field-tuned.** Max attitude error at ignition point, max altitude deviation, min/max ignition window — all decided before launch day and committed into the state machine. If any threshold is violated, state machine aborts to safe state (no ignition).
 
@@ -162,8 +162,7 @@ Design to the **5 m/s touchdown** case, not nominal (2 m/s).
 
 **Key things to watch for:**
 - If the user asks about motor selection, point them to thrustcurve.org and their specific Estes motor part number
-- If the user asks about BMP388 configuration, the datasheet Section 3.4 covers oversampling/ODR settings
-- If residual window comes out < 100ms in the simulation, flag this prominently — it means architecture changes, not just tuning
+- If residual window comes out < 100ms in the simulation, flag this prominently — it means architecture changes, not just tuning (higher apogee is the first lever to pull since it directly expands the window)
 - The TVC gimbal is the critical path. Any conversation about schedule should treat it as the item that cannot slip
 - Never encourage skipping the simulation to go straight to building. The simulation is a feasibility gate, not optional groundwork
 

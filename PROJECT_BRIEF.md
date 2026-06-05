@@ -25,24 +25,27 @@ Launch → Boost (ascent motor, TVC active) → Coast → Apogee
 HARDWARE
 ┌─────────────────────────────────────────────┐
 │ Flight Computer: Teensy 4.0 (600MHz M7)     │
-│ Sensors: Barometer/altimeter + IMU          │
+│ Sensors: IMU (double integration altitude)  │
+│          GPS optional (absolute alt ref)    │
 │ State machine: 5 phases                     │
 └─────────┬───────────────────────────────────┘
           │
     ┌─────┴──────────────────────────────────┐
     │  ASCENT               DESCENT/LANDING  │
     │  Estes F-class        Estes F-class    │
-    │  TVC gimbal           0-sec delay      │
-    │  Servo + PID          E-match trigger  │
-    │  Vertical             Low CoM passive  │
-    │  orientation          orientation      │
+    │  Shared TVC gimbal    0-sec delay      │
+    │  Servo + PID          Same PID code    │
+    │  Vertical             E-match trigger  │
+    │  orientation          Low CoM passive  │
+    │                       (pre-ignition)   │
     └────────────────────────────────────────┘
           │
     Spring-loaded legs (4x), deployed by flight computer
+    Launch motor ejects at burnout; landing motor takes its place in gimbal
     Linear control law: apogee altitude → ignition altitude
 ```
 
-**Builder profile:** High school / early college, strong C++, 3D printer access, $500 budget, ~10 weeks.
+**Builder profile:** High school / early college, strong C++, 3D printer access, flexible budget, rapid timeline.
 
 ---
 
@@ -68,30 +71,33 @@ What's left is your actual margin. **If it's under 100ms, your architecture need
 
 ### 1. Propulsion — Motor Selection & Characterization
 
+**Single gimbal, two motors, shared TVC code:**
+The launch motor and landing motor share the same gimbal mount. The launch motor burns, then ejects (spent casing clears the mount). The landing motor — pre-staged in or immediately behind the mount — takes its place. When the landing motor ignites, the flight computer runs the identical TVC/PID block used during ascent to maintain verticality. This eliminates the need for separate descent-phase attitude correction code and means TVC is actively correcting attitude throughout the landing burn, not just during boost.
+
+During the passive descent phase (after launch motor ejects, before landing motor ignites), TVC is inactive — no thrust to vector. Low CoM passive stability handles attitude in this window.
+
 **The control law assumption:** The linear apogee-to-ignition-altitude mapping assumes a deterministic, consistent descent trajectory. It works because physics is predictable *if* the motor behaves predictably.
 
 **What to watch:**
 - Estes F-class motors have batch-to-batch impulse variance of roughly ±15%. This matters for two reasons: (1) it introduces scatter in your landing burn velocity, and (2) your legs must be designed for worst-case impulse, not nominal.
-- Buy several motors from the same production batch if possible. Static-fire at least two before your first flight to characterize the actual thrust curve and measure ignition-to-thrust-onset latency with your specific e-match and relay configuration.
+- Buy several motors from the same production batch if possible. Static-fire at least two before your first flight to characterize the actual thrust curve and measure ignition-to-thrust-onset latency with your specific e-match configuration.
 - The "0-second delay" designation refers to the ejection charge delay, not ignition latency. Actual e-match ignition delay in your configuration needs to be measured empirically, not assumed.
 - Your control law should have an **early-ignition bias** baked in. A landing motor that fires slightly early produces a gentle return from the tail-off. A motor that fires slightly late produces ground impact at speed. Asymmetric consequences → bias toward early.
-
-**The dual-motor ignition offset problem (critical, easy to miss):**
-You have two motors with two separate e-matches and two separate pyro channels. Even a 20–50ms offset between the two igniting produces asymmetric thrust during the most critical phase of flight — when dynamic pressure is near-zero and TVC has no aerodynamic authority. Bench-verify that your dual ignition circuit fires within 10ms before any flight. This is a hard go/no-go gate, not a nice-to-have.
 
 ---
 
 ### 2. Guidance & Sensing — Sensor Architecture
 
-**The pure-barometer problem:**
-A BMP388-class barometric altimeter runs at ~25Hz with 0.5–1m altitude noise. At 30–50 ft altitude with a descent phase under 2 seconds, this is marginal. The sensor update period (40ms) alone is a meaningful fraction of your available timing window. Pure barometer is not sufficient for the terminal phase.
+**Altitude via IMU double integration:**
+Altitude is determined by integrating vertical acceleration from the IMU twice: once to get velocity, once to get position. This approach was validated in prior hobbyist builds using the same architecture. It works well for the terminal phase because the integration window is short (under 2 seconds) and drift has not yet accumulated to a meaningful level.
 
-**The required fix — sensor fusion:**
-Fuse barometric altitude with IMU accelerometer velocity integration for the terminal descent phase. The barometer gives you absolute altitude reference (low noise over long time, high noise over short time). The accelerometer integrates to velocity (accurate over the short terminal window, drifts over long periods). Together they give you the continuous, low-latency altitude and velocity estimate you need to compute the ignition moment. This is not optional at 30–50 ft target altitude.
+Over longer time scales (full flight arc from launch to apogee), integration drift becomes significant. Two mitigation strategies:
+- **GPS (if onboard):** Provides periodic absolute altitude fixes that can reset the integrated estimate. Low update rate (~1–10Hz) makes it unsuitable as the primary terminal-phase sensor, but excellent as a long-arc reference. Whether the Teensy module includes GPS determines if this is available at zero additional cost.
+- **Reset on known event:** The state machine knows when apogee is detected (velocity = 0 via IMU). You can reset the altitude integrator to zero at apogee and track only the descent from that point. Descent duration is short enough that drift remains small.
 
 **IMU considerations:**
-- Use the IMU for both attitude estimation (during boost and descent) and velocity integration (terminal phase).
-- Your PID loop for TVC needs the attitude data at a loop rate fast enough to be useful during a 1–2 second burn. 100–200Hz is typical for hobby flight controllers; make sure your Teensy loop is structured to support this.
+- Use the IMU for attitude estimation (TVC PID loop during both burns) and altitude/velocity tracking (double integration during descent).
+- Your PID loop for TVC needs attitude data at 100–200Hz. Structure the Teensy loop to support this — sensor reads, integration, and PID output all within one loop cycle.
 - Log everything. Every sensor reading, every state transition, every computed value. Treat every flight as a data collection event, not just a pass/fail test.
 
 ---
@@ -108,15 +114,14 @@ Key points:
 - Start with conservative (low) proportional gains and work up. Oscillation during burn will destabilize faster than you can correct manually.
 - The center of pressure moves during burn as the motor consumes propellant and vehicle CoM shifts. Account for this in your stability analysis.
 
-**Hardest Moment #2: Landing burn ignition transient (the one nobody talks about)**
-At the moment the landing motor ignites, airspeed is approximately zero. TVC has zero aerodynamic authority for the first 100–200ms of the burn while thrust is building and dynamic pressure remains low. This means: **the vehicle must already be attitude-stable before ignition.** If it arrives at the ignition point 15 degrees off-axis — even with TVC active on the landing motor — you will get a lateral crash, not a landing.
+**Hardest Moment #2: Landing burn ignition transient**
+At the moment the landing motor ignites, airspeed is approximately zero. For the first ~100ms of the burn, thrust is still spooling up and TVC authority is limited. However, because the landing motor is in the same gimbal running the same PID code, the flight computer is actively correcting attitude from the instant thrust becomes meaningful — this is a significant advantage over designs that rely on passive stability alone through the landing burn.
 
-This is what makes the passive descent stability design so important. Low CoM is the right call for scope reasons, but you need to understand its limitations:
-- The "pendulum effect" produces a weak restoring torque at low airspeeds. At 10 m/s descent with modest lateral velocity from apogee, the aerodynamic restoring force is small.
-- Any lateral velocity component acquired during or after apogee (tumbling, wind shear) persists through descent. There is no self-correcting force strong enough to zero it before ignition.
-- **Define a quantified acceptance criterion for off-axis angle at ignition.** Something like: "If attitude error exceeds X degrees at [altitude trigger], abort ignition." This goes in the state machine as a hardcoded threshold, not a field judgment call.
+The passive descent phase (no motor burning) still has no active control. Low CoM is the right design for this window, but its limitations are real:
+- The "pendulum effect" produces weak restoring torque at low airspeeds. Lateral velocity from apogee persists through descent.
+- **Define a quantified acceptance criterion for off-axis angle at ignition.** Something like: "If attitude error exceeds X degrees at ignition altitude, abort ignition." This is a hardcoded threshold in the state machine.
 
-**Practical implication:** Build and validate the passive descent stability early — drop tests, wind-tunnel-equivalent bench tests — before relying on it in flight. Know your actual off-axis envelope before you fly.
+**Practical implication:** Validate passive descent stability with drop/bench tests before flying. Know your actual off-axis envelope so you can set the abort threshold to a number grounded in data, not a guess.
 
 ---
 
@@ -238,9 +243,9 @@ Use it as existence proof of concept, not as a recipe. Build your own simulation
 
 - **The timing window is your specification.** Compute it before you design anything else.
 - **Low CoM is correct but incomplete.** It reduces the problem; it doesn't eliminate descent attitude risk. Quantify the acceptable off-axis envelope.
-- **Sensor fusion is required.** Pure barometer at this altitude and time scale is insufficient for the terminal phase. Fuse with IMU.
-- **Dual e-match synchronization is a go/no-go gate.** Bench-verify to <10ms before any flight.
-- **TVC has no authority at ignition.** The vehicle must arrive at the ignition point already stable. Your descent stability system is what makes or breaks the landing, not TVC.
+- **Altitude via IMU double integration.** Integrate vertical acceleration twice for altitude. Reset the integrator at apogee (known zero-velocity event) to bound drift. GPS onboard gives a free absolute-altitude cross-check.
+- **Single gimbal, shared TVC code.** Launch motor ejects at burnout; landing motor takes its place. Same PID loop runs both burns — TVC is actively correcting attitude throughout the landing burn.
+- **Passive descent stability still matters.** During the coast-to-ignition phase there is no active control. Low CoM handles attitude in this window. Vehicle must arrive at ignition point sufficiently upright for TVC to take over cleanly.
 - **Design legs for the 5 m/s case.** Nominal is 2 m/s; design spec is 5 m/s; 10 m/s is an accepted write-off.
 - **Hardcode abort thresholds.** Decide before field day what numbers cause a no-ignition abort. Don't make this call on the launch pad.
 - **Log everything.** Every flight is worth more with data than without. A crash with logs is a design input. A crash without logs is a write-off.

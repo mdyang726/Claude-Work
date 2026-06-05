@@ -4,538 +4,541 @@
 
 ---
 
-## What This Script Actually Does
+## What This Script Does
 
-The simulation answers one question: **at the moment your sensor detects the ignition altitude, how much time remains before ground impact after subtracting every real-world delay between detection and meaningful thrust?**
+One question: **at the moment your IMU integration detects the ignition altitude, how much time remains before ground impact after subtracting every real-world delay between detection and meaningful thrust?**
 
-If that number is positive with margin → proceed. If it's negative or near zero → your architecture must change before you order anything.
+If that number is positive with margin → proceed. If it's near zero or negative → architecture must change before you order anything.
 
 The simulation models:
 1. Your rocket falling from apogee under gravity + aerodynamic drag
 2. Velocity and altitude at every millisecond of descent
-3. The moment your detection altitude is crossed
+3. The moment your IMU-integrated altitude crosses the ignition threshold
 4. Subtraction of every real latency in your system
-5. What's left over — the residual window
+5. What's left — the residual window
 
 ---
 
-## Part 1: Where to Run This
+## How to Run This in VS Code
 
-### Option A — Local Python (Recommended)
+**One-time setup — paste this into the VS Code terminal (`Ctrl+\``):**
 
-This is the right long-term setup. You'll use Python throughout this project for data analysis, log parsing, and future simulations.
+```
+pip install numpy matplotlib
+```
 
-**Install:**
-1. Download Python 3.11+ from [python.org](https://python.org). During install, check "Add Python to PATH."
-2. Install VS Code from [code.visualstudio.com](https://code.visualstudio.com).
-3. Install the Python extension inside VS Code (search "Python" in the Extensions panel).
-4. Open a terminal in VS Code (`Ctrl+\``) and run:
-   ```
-   pip install numpy matplotlib
-   ```
-5. Create a file called `terminal_sim.py` and run it with the Play button or `python terminal_sim.py` in the terminal.
+Then create a new file called `terminal_sim.py`, paste in the script from Part 5, and press the Play button (▶) in the top right, or run:
 
-**Research if needed:** "Python VS Code setup tutorial" — Microsoft's own docs are the best starting point.
+```
+python terminal_sim.py
+```
 
-### Option B — Google Colab (No install, runs in browser)
-
-Go to [colab.research.google.com](https://colab.research.google.com), create a new notebook, paste code into a cell, and press Shift+Enter to run. numpy and matplotlib are pre-installed. Good for quickly prototyping before committing to a local setup.
-
-### Option C — Replit
-
-Go to [replit.com](https://replit.com), create a Python repl, paste your code. Requires an account. Slightly slower than local but works from any machine.
+That's it. The script prints results to the terminal and saves a plot as `terminal_phase_sim.png` in the same folder.
 
 ---
 
-## Part 2: The Physics Model
+## Part 1: The Physics Model
 
-This is the core of the simulation. You need to understand each piece before you can make good assumptions.
+### 1.1 Forces During Descent
 
-### 2.1 Forces on the Rocket During Descent
-
-During descent (after apogee, before landing motor ignition), two forces act on the rocket:
+After apogee (launch motor ejected, landing motor not yet ignited), two forces act on the rocket:
 
 - **Gravity** pulls it down: `F_gravity = m × g`
-- **Aerodynamic drag** resists motion (acts upward, opposing the downward velocity): `F_drag = 0.5 × ρ × v² × Cd × A`
+- **Drag** resists motion (acts upward): `F_drag = 0.5 × ρ × v² × Cd × A`
 
-Net downward force: `F_net = m×g − F_drag`
-
-Net downward acceleration: `a = g − (ρ × v² × Cd × A) / (2 × m)`
-
-Where:
-- `m` = rocket mass in kilograms
-- `g` = 9.81 m/s²
-- `ρ` = air density (kg/m³) — 1.225 at sea level
-- `v` = current velocity (m/s), starts at 0 at apogee, increases as it falls
-- `Cd` = drag coefficient (dimensionless) — this is a design decision, covered in Part 3
-- `A` = reference area (m²) — the cross-sectional area of your rocket body
-
-### 2.2 Numerical Integration
-
-You can't solve this analytically because drag depends on velocity which is changing. Instead, you step forward in small time increments (dt = 1ms works well):
+Net downward acceleration at any moment:
 
 ```
-At each time step:
-  compute drag force from current velocity
+a = g − (ρ × v² × Cd × A) / (2 × m)
+```
+
+### 1.2 Altitude via IMU Double Integration
+
+The flight computer does not use a barometer. Instead, it integrates IMU vertical acceleration twice each loop cycle:
+
+```
+Step 1:  v_new = v + a_measured × dt    → velocity
+Step 2:  h_new = h − v_new × dt        → altitude (decreasing as rocket falls)
+```
+
+The integrator is reset to zero at apogee (IMU detects velocity = 0). From that point, only the short descent arc needs to be integrated, keeping drift negligible.
+
+The simulation uses the same integration approach — it models the descent the same way the flight computer will see it.
+
+### 1.3 Numerical Integration (Simulation)
+
+You can't solve the drag equation analytically because drag depends on velocity. Instead, step forward at dt = 1ms:
+
+```
+At each timestep:
+  compute drag from current velocity
   compute net acceleration
-  update velocity: v_new = v + a × dt
-  update altitude: h_new = h − v × dt   (altitude decreases as it falls)
-  record (time, velocity, altitude)
-  if altitude <= detection_altitude: record the detection moment
-  if altitude <= 0: stop (ground impact)
+  update velocity and altitude
+  if altitude ≤ h_detect: record detection moment
+  if altitude ≤ 0: stop (ground impact)
 ```
 
-This is Euler integration — simple, sufficient for this purpose. With dt=1ms and a ~2-second descent, you're doing ~2000 steps. Computationally instant.
-
-### 2.3 Terminal Velocity
-
-With drag included, the rocket doesn't accelerate forever — it approaches a terminal velocity where drag equals gravity. For a small rocket, terminal velocity during descent is typically 8–18 m/s depending on mass and Cd. This is what you're trying to nail down.
+~2000 steps for a ~2-second descent. Runs instantly.
 
 ---
 
-## Part 3: Vehicle Parameters — What You Need and How to Get Them
+## Part 2: Vehicle Parameters
 
-These are the inputs to your simulation. Each one requires a decision or measurement.
+### 2.1 Mass at Landing (`m`)
 
-### 3.1 Mass at Landing (`m`)
+Rocket mass **when the landing motor fires** — after the launch motor has been ejected.
 
-This is the rocket's mass **at the moment the landing motor fires**, not at launch.
+At landing you have: airframe + fins + electronics + legs + landing motor (full, unfired). No launch motor or its propellant.
 
-At landing, you have:
-- Empty airframe + fins + electronics + legs
-- Landing motor (full — it hasn't fired yet)
-- **No** ascent motor propellant (it was burned on the way up)
-- The ascent motor casing is still there (it doesn't eject)
+**Estimate:** 400–600g to start. Weigh everything when you have parts. Estes publishes casing and propellant masses in spec sheets.
 
-**How to get it:** Weigh everything. If you don't have all the parts yet, estimate from component specs. Estes motor casings and their propellant masses are published in the motor's spec sheet. Add them up. A rough starting estimate for this vehicle is 400–600g.
+**Why it matters:** Higher mass = faster terminal velocity = less time to impact.
 
-**Why it matters:** Higher mass = more gravity force = faster terminal velocity = less time to impact. The simulation is highly sensitive to mass — be honest about it.
+### 2.2 Drag Coefficient (`Cd`)
 
-### 3.2 Drag Coefficient (`Cd`)
+A dimensionless number for how much drag your shape produces. Typical for an unpowered model rocket in descent: **0.4–0.8**.
 
-This is the hardest parameter to get right without wind tunnel data.
+Descent Cd is higher than ascent Cd because:
+- Attitude during passive descent is uncertain (low CoM produces pendulum stability, not locked nose-first)
+- Legs may be partially deployed
+- Launch motor ejected, changing the base geometry
 
-**What it is:** A dimensionless number that characterizes how much aerodynamic drag your shape produces. Cd=0 is theoretical (no drag). A blunt cylinder is ~1.0. A well-designed rocket nose cone + body is ~0.4–0.7 during unpowered flight.
+**Run the simulation at Cd = 0.4, 0.6, and 0.8** to bracket the uncertainty. OpenRocket will give you a geometry-based estimate later — use that to narrow the range.
 
-**Research direction:** Look up "drag coefficient model rocket" on the NAR (National Association of Rocketry) website and in OpenRocket's documentation. OpenRocket actually computes Cd from geometry — you'll use this number later when you build the OpenRocket model. For now, bracket it: run your simulation at Cd=0.4 (optimistic), Cd=0.6 (nominal), and Cd=0.8 (pessimistic for descent with legs deployed).
+### 2.3 Reference Area (`A`)
 
-**Critical note:** Your Cd changes between ascent and descent. During descent, you're likely falling nose-down or in an uncertain attitude (low CoM passive stability), legs may be partially deployed, and the flow field is different from ascent. The descent Cd is almost certainly higher than your ascent Cd. Use a conservative (higher) value.
+Cross-sectional area of the body tube:
 
-**How it connects to the project brief:** The brief says "low CoM passive stability" produces uncertain attitude during descent — this directly increases your effective Cd.
+```
+A = π × r²     where r = outer radius in meters
+```
 
-### 3.3 Reference Area (`A`)
+Example: 54mm tube → r = 0.027m → A ≈ 0.00229 m²
 
-This is the cross-sectional area of your rocket's body tube — the area you'd see if you looked at the rocket from the side that the airflow hits.
+Standard Estes F-class motors require a 29mm mount, which fits inside a 54mm body tube.
 
-`A = π × r²`
+### 2.4 Apogee Altitude (`h_apogee`)
 
-where `r` is the outer radius of your body tube in meters.
+Where the simulation starts. Velocity = 0 at apogee.
 
-**Example:** A 54mm (Estes standard) body tube has r = 0.027m, so A = π × 0.027² ≈ 0.00229 m²
+**Key insight:** Higher apogee directly expands your ignition window — more altitude to fall means slower descent velocity at the ignition point and more time before ground impact. Apogee is a design variable, not fixed. 30ft was a reference video constraint; you are not bound to it.
 
-You need to decide on body tube diameter before running the sim — but this is usually constrained by your motor diameter anyway. Estes F-class motors require a 29mm motor mount, which fits inside a standard 54mm body tube.
+**Starting value:** 15m (50ft) — pessimistic, on the low end. If the design passes here, it passes everywhere above. Once you have an OpenRocket model, replace with the simulated apogee.
 
-### 3.4 Apogee Altitude (`h_apogee`)
+### 2.5 Detection Altitude (`h_detect`)
 
-This is where the simulation starts. At apogee, velocity = 0.
+The IMU-integrated altitude at which the state machine triggers ignition. This is a **design variable you choose** — your control law maps measured apogee to this threshold.
 
-**How to get it (before OpenRocket):** Use a quick estimate. Estes F-class motors (specifically F15 or F39) deliver around 30–40 Newton-seconds of total impulse. For a 500g rocket with F15-0 motor, apogee will be somewhere in the 30–80ft range depending on drag and motor thrust curve. The project brief says 30–50ft is the target range.
+**Starting point:** 3m (10ft). The sensitivity analysis will tell you how this choice interacts with apogee and Cd.
 
-**Start your simulation at 50ft (15.2m).** This is a conservative choice — lower apogee = faster descent at ignition altitude = less timing margin. If your design passes at 15m apogee, it passes at higher altitudes too.
-
-**Once you have OpenRocket:** Replace this with the actual simulated apogee. But for the feasibility gate, start with a pessimistic estimate.
-
-### 3.5 Detection Altitude (`h_detect`)
-
-This is the altitude at which your barometer reads "fire now." It is a **design variable** — you choose it. Your control law maps measured apogee to this altitude.
-
-**Starting point:** 3m (approximately 10ft) is the value from the project brief. This is where the ~250ms window comes from.
-
-**What the simulation tells you:** At 3m altitude with your specific mass and Cd, what is the descent velocity? How many milliseconds remain until ground impact? That's your gross window before any latency subtraction.
-
-**Design insight:** If the window is too tight, you have two levers: increase detection altitude (fire earlier, from higher up — but then descent velocity at ignition is lower, which means the burn may not zero out velocity before touchdown) or increase apogee target (more time to fall, slower terminal velocity). These tradeoffs are exactly what the simulation reveals.
+**The tradeoff:** Higher detection altitude = more time between detection and impact (larger gross window) but lower descent velocity at ignition, which means the motor may not fully arrest descent before touchdown. Lower detection altitude = less window but the motor fires into faster descent. The simulation reveals this tradeoff quantitatively.
 
 ---
 
-## Part 4: The Latency Budget — Every Millisecond Accounted For
+## Part 3: The Latency Budget
 
-This is what separates a real feasibility analysis from a back-of-the-envelope guess. Stack these in order — each one subtracts from your gross window.
+Every millisecond between "detection" and "thrust exceeds vehicle weight" must be subtracted from your gross window. Stack these in order.
 
-### 4.1 Barometer Sensor Update Period
+### IMU Integration Cycle
 
-The BMP388 (and similar Bosch sensors) uses oversampling to reduce noise. Higher oversampling = lower noise = higher latency. This is a design decision you control in firmware.
+The IMU produces new acceleration data at its configured output rate. At 200Hz, a new reading arrives every 5ms. The flight computer integrates each reading as it arrives.
 
-| Mode | Oversampling | Typical update period | Pressure noise (std dev) |
-|------|-------------|----------------------|--------------------------|
-| Fastest | OSR x1 | ~5ms | ~0.9 Pa (~7.5cm altitude noise) |
-| Low noise | OSR x4 | ~20ms | ~0.5 Pa (~4cm noise) |
-| Medium | OSR x8 | ~40ms | ~0.35 Pa |
-| High | OSR x16 | ~80ms | ~0.25 Pa |
-| Ultra | OSR x32 | ~160ms | ~0.18 Pa |
+Worst-case: ignition altitude is crossed at the very start of a loop cycle, so detection happens at the *next* cycle. Latency = one loop period.
 
-**Research direction:** Look up "BMP388 datasheet" — Section 3.4 covers output data rate and oversampling settings. The Bosch datasheet is freely available.
+**At 200Hz loop: 5ms. At 100Hz loop: 10ms.**
 
-**The tradeoff:** At low altitude and high descent speed, you want fast updates. But fast updates mean noisy altitude readings — a reading with 7.5cm noise at 3m altitude has 2.5% relative error. A false trigger from noise firing the motor 200ms too early at terminal velocity could be as bad as a late trigger.
+Unlike a barometer (which required a separate wait period on top of the loop cycle), the IMU integration IS the loop cycle. This is why the latency budget improves significantly over a barometer-based system.
 
-**Recommendation for your first simulation:** Use OSR x4 (20ms). This is reasonable for the terminal phase — you'll use IMU fusion for the high-noise shortfall. Make a note to test this setting's noise level empirically with your actual hardware before flying.
+**Measure your actual Teensy loop rate** with `micros()` in firmware once your sensor fusion code is written. The number you use in this sim should match measured reality.
 
-### 4.2 Sensor Read + State Machine Compute Cycle
+### MOSFET Switching
 
-Your Teensy runs a main loop that reads sensors, updates state, and makes decisions. The loop has a period — and your detection can only happen at the start of a new loop cycle.
+Logic-level N-channel MOSFET (e.g., IRLZ44N): switching time < 1ms. Use a MOSFET, not a mechanical relay. Relay switching adds 10–20ms unnecessarily.
 
-Worst case: the ignition altitude is crossed at the very start of a loop cycle, so you don't detect it until the *next* cycle — a full loop period of delay.
+### E-match Ignition Latency
 
-**Design decision:** What loop rate will you run? Options:
-- 100Hz → 10ms loop period
-- 200Hz → 5ms loop period
-- 500Hz → 2ms loop period (aggressive for Teensy + sensor fusion)
+Time from current-through-match to chemical initiation. **Typical: 10–50ms.** Varies significantly by manufacturer and firing current.
 
-**For simulation:** Use 10ms (100Hz loop) as a conservative estimate. The Teensy 4.0 at 600MHz is more than capable of 200Hz+ with sensor fusion, but don't count on it until you measure it empirically.
+**This is the single largest variable latency and must be measured empirically** — fire your specific e-matches with your specific circuit into a resistive load, measure with an oscilloscope or a microcontroller timer pin. Do this before flying. Use 50ms in the simulation as a conservative placeholder until measured.
 
-**Research direction:** "Teensy 4.0 loop rate IMU" — the PJRC forums and many rocketry/drone projects have characterized this. For a simple state machine + IMU + barometer, 500Hz is achievable.
+### Motor Spool Time
 
-### 4.3 Relay or MOSFET Switching Latency
+Time from chemical ignition to thrust exceeding vehicle weight (the point where the rocket actually starts decelerating). For Estes F-class motors, the thrust curve shows a sharp initial rise — but "meaningful thrust" depends on your vehicle weight.
 
-Between the Teensy sending a "fire" signal and current flowing through the e-match, there's a relay or transistor switching. This is typically very fast for a MOSFET (microseconds) but can be 10–20ms for a mechanical relay.
+**How to find it:** Download your motor's thrust curve from thrustcurve.org. Find the time at which thrust (N) first exceeds `m × g` (your vehicle weight in Newtons). That time is your spool latency.
 
-**Use a MOSFET** (logic-level N-channel MOSFET like the IRLZ44N), not a mechanical relay, for the ignition circuit. Switching time is then <1ms and you can ignore this term.
+**For simulation:** Use 50ms conservative until you've done the thrust curve calculation.
 
-**Research direction:** Look up "model rocket ignition circuit MOSFET" — many amateur rocketry guides cover this. The key spec to look for is gate charge time at your driving voltage.
-
-### 4.4 E-match Ignition Latency
-
-This is the time between current flowing through the e-match and the match actually initiating (heating up enough to pop). This is not the same as motor spool time — it's the match itself.
-
-**Typical range:** 10–50ms for common e-matches, measured at the firing current.
-**Important:** This varies by e-match manufacturer and firing current. Higher current = faster ignition. The project brief explicitly says to measure this empirically on your bench before flying.
-
-**For simulation:** Use 50ms as a conservative worst-case. Once you've characterized your specific e-matches with your specific firing circuit, replace this with measured values.
-
-**Research direction:** "Estes e-match ignition delay" and "e-match firing time characterization" — some hobbyist rocketry groups have measured these. The key is to measure with your specific circuit configuration, not assume from datasheets.
-
-### 4.5 Motor Spool Time (Thrust Onset Latency)
-
-After the e-match fires, the motor propellant needs time to ignite and build up thrust. This is the time from chemical ignition to meaningful thrust (typically defined as when thrust exceeds vehicle weight — i.e., when the rocket actually starts decelerating).
-
-**For Estes motors:** The thrust curve shows a sharp initial spike. However, meaningful deceleration (thrust > weight) may take 20–50ms from chemical ignition depending on the motor variant.
-
-**Research direction:** Download the thrust curve data for your specific motor from [thrustcurve.org](https://www.thrustcurve.org). This site has digitized curves for virtually all certified hobby motors. Look at how quickly the thrust rises from zero — that rise time is your spool latency.
-
-**For simulation:** Use 50ms as a conservative estimate. This is the number most likely to vary by motor variant.
-
-### 4.6 Total Latency Stack
+### Total Stack
 
 ```
-Barometer update period:          20ms  (OSR x4)
-Loop cycle worst-case:            10ms  (100Hz loop)
+IMU loop cycle (200Hz):           5ms
+MOSFET switching:                  1ms
+E-match ignition (conservative):  50ms
+Motor spool to thrust > weight:   50ms
+──────────────────────────────────────
+Total worst-case:                106ms
+```
+
+At 100Hz loop:
+
+```
+IMU loop cycle (100Hz):           10ms
 MOSFET switching:                  1ms
 E-match ignition:                 50ms
-Motor spool to meaningful thrust: 50ms
-─────────────────────────────────────
-Worst-case total latency:        131ms
+Motor spool:                      50ms
+──────────────────────────────────────
+Total:                           111ms
 ```
 
-Your gross window (time from detection altitude to ground impact) must exceed this with comfortable margin. If gross window = 250ms and latency stack = 131ms, residual = 119ms. That's tight but workable — the brief says 100ms minimum before you need architecture changes.
+Either way, the budget is tighter than a barometer-based system (which added 20ms on top). **Your gross window must exceed this with comfortable margin.**
 
-If you can reduce loop latency (500Hz loop → 2ms) and characterize e-matches empirically (perhaps 30ms measured vs. 50ms assumed), your residual improves significantly.
+---
+
+## Part 4: File and Folder Setup
+
+Before pasting the script, set up a clean folder:
+
+```
+model-rocket/
+├── terminal_sim.py        ← paste the script here
+├── terminal_phase_sim.png ← generated automatically when you run it
+```
+
+Open the folder in VS Code: `File → Open Folder`, select it. Then create `terminal_sim.py` and paste in the script below.
 
 ---
 
 ## Part 5: The Script
 
-Here is the complete simulation with annotations explaining every decision. Read each comment — the comments are the learning.
+Paste this entire block into `terminal_sim.py`. All parameters you need to change are in the top section labeled **VEHICLE PARAMETERS** and **LATENCY BUDGET** — everything below those sections runs automatically.
 
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
 
-# ─────────────────────────────────────────────
-# VEHICLE PARAMETERS
-# ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# VEHICLE PARAMETERS  ← change these to match your rocket
+# ═══════════════════════════════════════════════════════════════
 
-m = 0.50          # kg — rocket mass at landing (with landing motor, no ascent propellant)
-                  # RESEARCH: weigh your components. Estes motor casing weights are in spec sheets.
+m = 0.50          # kg — rocket mass at landing
+                  # = airframe + electronics + legs + landing motor (unfired)
+                  # NOTE: launch motor has ejected, so no launch motor mass here
+                  # HOW TO GET IT: weigh every component. Estes publishes motor casing
+                  # and propellant masses in their spec sheets.
 
-Cd = 0.6          # drag coefficient during descent
-                  # RESEARCH: OpenRocket will give you a number; use 0.6 as starting point.
-                  # Run the simulation at 0.4 and 0.8 too — bracket the uncertainty.
+Cd = 0.6          # drag coefficient during descent (dimensionless)
+                  # RANGE: run at 0.4 (optimistic), 0.6 (nominal), 0.8 (pessimistic)
+                  # WHY HIGHER THAN ASCENT: uncertain attitude during passive descent,
+                  # legs possibly partially deployed, launch motor casing ejected.
+                  # HOW TO REFINE: OpenRocket computes Cd from your geometry.
 
-diameter = 0.054  # m — outer diameter of body tube (54mm = standard Estes)
-                  # RESEARCH: measure your actual tube OD when you have it.
+diameter = 0.054  # m — outer diameter of body tube (0.054m = 54mm standard Estes)
+                  # HOW TO GET IT: measure your actual tube or check supplier spec sheet.
 
-A = np.pi * (diameter / 2)**2   # reference area in m² (cross-sectional circle)
+A = np.pi * (diameter / 2)**2   # reference area (m²) — computed automatically
 
-h_apogee = 15.0  # m — apogee altitude above ground (15m ≈ 50ft, pessimistic starting estimate)
-                 # RESEARCH: OpenRocket will give you the real number once your design is modeled.
+h_apogee = 15.0  # m — apogee altitude above ground
+                 # START WITH: 15m (≈50ft) as a pessimistic baseline.
+                 # Higher apogee = larger ignition window. This is a design variable —
+                 # don't treat the reference video's 30ft as a constraint.
+                 # HOW TO REFINE: OpenRocket simulation once you have a CAD model.
 
-h_detect = 3.0   # m — altitude at which barometer triggers ignition
-                 # DESIGN DECISION: this is the number your control law targets.
-                 # The simulation tells you whether this choice leaves enough window.
+h_detect = 3.0   # m — IMU-integrated altitude at which ignition is triggered
+                 # THIS IS A DESIGN VARIABLE. Start at 3m. Sensitivity analysis
+                 # (Part 6) shows how changing this affects your window.
 
-# ─────────────────────────────────────────────
-# PHYSICAL CONSTANTS
-# ─────────────────────────────────────────────
 
-g = 9.81          # m/s² — gravitational acceleration
-rho = 1.225       # kg/m³ — air density at sea level (fine for low-altitude flights)
-                  # RESEARCH: if flying at significant elevation, look up density altitude correction.
+# ═══════════════════════════════════════════════════════════════
+# LATENCY BUDGET  ← update these once you have measured values
+# ═══════════════════════════════════════════════════════════════
 
-# ─────────────────────────────────────────────
-# LATENCY BUDGET (worst-case, in seconds)
-# ─────────────────────────────────────────────
+t_loop   = 0.005  # s — flight computer loop period (5ms = 200Hz loop)
+                  # This is also your IMU integration cycle — no separate barometer
+                  # wait needed. The IMU integrates on every loop cycle.
+                  # HOW TO MEASURE: time your firmware loop with micros() on Teensy.
+                  # Use 0.010 (100Hz) if you haven't measured yet — conservative.
 
-t_baro   = 0.020  # s — BMP388 update period at OSR x4
-                  # RESEARCH: BMP388 datasheet Section 3.4 (output data rate table)
+t_mosfet = 0.001  # s — MOSFET switching latency (<1ms with logic-level FET)
+                  # Use a MOSFET (e.g. IRLZ44N), not a relay. Relay adds 10-20ms.
 
-t_loop   = 0.010  # s — Teensy loop cycle worst-case (100Hz = 10ms)
-                  # RESEARCH: measure your actual loop period with micros() in firmware
+t_ematch = 0.050  # s — e-match ignition latency (50ms = conservative placeholder)
+                  # THIS MUST BE MEASURED on your bench before flying.
+                  # Fire your e-matches with your circuit into a resistor load.
+                  # Measure time from trigger signal to current onset with a scope
+                  # or Teensy timer pin. Replace 0.050 with your measured value.
 
-t_mosfet = 0.001  # s — MOSFET switching latency (negligible with logic-level FET)
+t_spool  = 0.050  # s — motor spool time from ignition to thrust > vehicle weight
+                  # HOW TO GET IT: download your motor's thrust curve from
+                  # thrustcurve.org. Find the time where thrust (N) first exceeds
+                  # m * 9.81 (your vehicle weight in Newtons).
 
-t_ematch = 0.050  # s — e-match ignition latency (conservative estimate)
-                  # RESEARCH: characterize empirically. Fire into a known load, measure current onset
-                  # with an oscilloscope. Replace this number with your measured value.
+total_latency = t_loop + t_mosfet + t_ematch + t_spool
 
-t_spool  = 0.050  # s — motor spool time from chemical ignition to thrust > vehicle weight
-                  # RESEARCH: download your motor's thrust curve from thrustcurve.org
-                  # Find the time from t=0 to when thrust (N) crosses m*g (your vehicle weight)
 
-total_latency = t_baro + t_loop + t_mosfet + t_ematch + t_spool
+# ═══════════════════════════════════════════════════════════════
+# PHYSICAL CONSTANTS  ← leave these alone
+# ═══════════════════════════════════════════════════════════════
 
-print(f"\n{'='*50}")
+g   = 9.81    # m/s²
+rho = 1.225   # kg/m³ — sea level air density
+
+
+# ═══════════════════════════════════════════════════════════════
+# PRINT SETUP
+# ═══════════════════════════════════════════════════════════════
+
+print(f"\n{'='*52}")
 print(f"LATENCY BUDGET")
-print(f"{'='*50}")
-print(f"  Barometer update period:    {t_baro*1000:.1f} ms")
-print(f"  Loop cycle (worst-case):    {t_loop*1000:.1f} ms")
-print(f"  MOSFET switching:           {t_mosfet*1000:.1f} ms")
-print(f"  E-match ignition:           {t_ematch*1000:.1f} ms")
-print(f"  Motor spool to thrust:      {t_spool*1000:.1f} ms")
-print(f"  ─────────────────────────────")
-print(f"  TOTAL:                      {total_latency*1000:.1f} ms")
+print(f"{'='*52}")
+print(f"  IMU loop cycle (detection):     {t_loop*1000:.1f} ms")
+print(f"  MOSFET switching:               {t_mosfet*1000:.1f} ms")
+print(f"  E-match ignition:               {t_ematch*1000:.1f} ms")
+print(f"  Motor spool to thrust>weight:   {t_spool*1000:.1f} ms")
+print(f"  {'─'*38}")
+print(f"  TOTAL:                          {total_latency*1000:.1f} ms")
 
-# ─────────────────────────────────────────────
-# DESCENT SIMULATION (numerical integration)
-# ─────────────────────────────────────────────
 
-dt = 0.001        # s — time step (1ms). Small enough for good accuracy, fast to compute.
+# ═══════════════════════════════════════════════════════════════
+# DESCENT SIMULATION
+# ═══════════════════════════════════════════════════════════════
+# Models the rocket falling from apogee under gravity + drag.
+# Same physics the flight computer integrates onboard.
+# dt=1ms gives good accuracy and runs instantly.
 
-# Initial conditions
-t = 0.0
-v = 0.0           # m/s — velocity at apogee is 0 (momentarily stationary)
-h = h_apogee      # m — start at apogee
+dt = 0.001
 
-# Storage for plotting
-times = [t]
-velocities = [v]
-altitudes = [h]
+t, v, h = 0.0, 0.0, h_apogee
 
-# Track the detection event
-detection_time = None
-detection_velocity = None
-detection_altitude = None
-ground_impact_time = None
+times, velocities, altitudes = [t], [v], [h]
+detection_time = detection_velocity = ground_impact_time = None
 
 while h > 0:
-    # Drag force (opposes motion — acts upward since rocket falls downward)
-    F_drag = 0.5 * rho * v**2 * Cd * A   # Newtons
-
-    # Net downward acceleration
-    a = g - F_drag / m                    # m/s²
-
-    # Euler integration: update velocity and position
-    v = v + a * dt                        # velocity increases as rocket accelerates downward
-    h = h - v * dt                        # altitude decreases
-
-    t = t + dt
+    F_drag = 0.5 * rho * v**2 * Cd * A
+    a      = g - F_drag / m
+    v      = v + a * dt
+    h      = h - v * dt
+    t      = t + dt
 
     times.append(t)
     velocities.append(v)
     altitudes.append(h)
 
-    # Check if we've crossed the detection altitude
     if detection_time is None and h <= h_detect:
-        detection_time = t
+        detection_time     = t
         detection_velocity = v
-        detection_altitude = h
 
 ground_impact_time = t
 
-# ─────────────────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════
 # RESULTS
-# ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
 
-gross_window = ground_impact_time - detection_time   # seconds from detection to ground
-residual_window = gross_window - total_latency        # what's left after latency stack
+gross_window    = ground_impact_time - detection_time
+residual_window = gross_window - total_latency
 
-print(f"\n{'='*50}")
+print(f"\n{'='*52}")
 print(f"VEHICLE PARAMETERS")
-print(f"{'='*50}")
-print(f"  Mass (landing config):      {m*1000:.0f} g")
-print(f"  Drag coefficient:           {Cd:.2f}")
-print(f"  Body diameter:              {diameter*1000:.0f} mm")
-print(f"  Reference area:             {A*10000:.2f} cm²")
+print(f"{'='*52}")
+print(f"  Mass (landing config):          {m*1000:.0f} g")
+print(f"  Drag coefficient:               {Cd:.2f}")
+print(f"  Body diameter:                  {diameter*1000:.0f} mm")
+print(f"  Reference area:                 {A*10000:.2f} cm²")
 
-print(f"\n{'='*50}")
+print(f"\n{'='*52}")
 print(f"DESCENT PROFILE")
-print(f"{'='*50}")
-print(f"  Apogee:                     {h_apogee:.1f} m  ({h_apogee*3.281:.0f} ft)")
-print(f"  Detection altitude:         {h_detect:.1f} m  ({h_detect*3.281:.0f} ft)")
-print(f"  Detection velocity:         {detection_velocity:.2f} m/s  ({detection_velocity*3.281:.1f} ft/s)")
-print(f"  Time from apogee to detect: {detection_time*1000:.0f} ms")
-print(f"  Time from apogee to impact: {ground_impact_time*1000:.0f} ms")
+print(f"{'='*52}")
+print(f"  Apogee:                         {h_apogee:.1f} m  ({h_apogee*3.281:.0f} ft)")
+print(f"  Detection altitude:             {h_detect:.1f} m  ({h_detect*3.281:.0f} ft)")
+print(f"  Velocity at detection:          {detection_velocity:.2f} m/s  ({detection_velocity*3.281:.1f} ft/s)")
+print(f"  Time apogee → detection:        {detection_time*1000:.0f} ms")
+print(f"  Time apogee → ground:           {ground_impact_time*1000:.0f} ms")
 
-print(f"\n{'='*50}")
-print(f"IGNITION WINDOW ANALYSIS")
-print(f"{'='*50}")
-print(f"  Gross window (detect → impact):   {gross_window*1000:.1f} ms")
-print(f"  Total latency stack:              {total_latency*1000:.1f} ms")
-print(f"  RESIDUAL WINDOW:                  {residual_window*1000:.1f} ms")
+print(f"\n{'='*52}")
+print(f"IGNITION WINDOW")
+print(f"{'='*52}")
+print(f"  Gross window (detect→impact):   {gross_window*1000:.1f} ms")
+print(f"  Total latency stack:            {total_latency*1000:.1f} ms")
+print(f"  RESIDUAL WINDOW:                {residual_window*1000:.1f} ms")
 
 if residual_window < 0:
-    print(f"\n  ❌ FAIL — window is NEGATIVE. Architecture must change.")
-    print(f"     Options: raise detection altitude, increase apogee, reduce latency stack,")
-    print(f"     or add a drogue to slow descent.")
+    print(f"\n  FAIL — window is NEGATIVE. Architecture must change.")
+    print(f"  Options: raise h_apogee, raise h_detect, reduce e-match latency.")
 elif residual_window < 0.100:
-    print(f"\n  ⚠️  MARGINAL — window is under 100ms. Proceed with caution.")
-    print(f"     Abort logic is mandatory. Reduce latency where possible.")
+    print(f"\n  MARGINAL — under 100ms. Measure all latency terms empirically.")
+    print(f"  Raise apogee or detection altitude before flying.")
 elif residual_window < 0.200:
-    print(f"\n  ✅ WORKABLE — 100–200ms residual. Measure all latency terms empirically.")
-    print(f"     Apply early-ignition bias in control law.")
+    print(f"\n  WORKABLE — 100-200ms. Measure e-match latency on bench.")
+    print(f"  Apply early-ignition bias in control law.")
 else:
-    print(f"\n  ✅ GOOD — over 200ms residual. Design has margin.")
+    print(f"\n  GOOD — over 200ms. Solid margin.")
 
-# ─────────────────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════
 # PLOT
-# ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 fig.suptitle('Terminal Phase Descent Simulation', fontsize=13, fontweight='bold')
 
-times_arr = np.array(times)
+times_arr      = np.array(times)
 velocities_arr = np.array(velocities)
-altitudes_arr = np.array(altitudes)
+altitudes_arr  = np.array(altitudes)
 
-# Plot 1: Velocity vs Time
+# Left: velocity vs time
 ax1.plot(times_arr * 1000, velocities_arr, 'b-', linewidth=2)
-if detection_time:
-    ax1.axvline(detection_time * 1000, color='orange', linestyle='--', label=f'Detection ({h_detect}m)')
-    ax1.axvline((detection_time + total_latency) * 1000, color='red', linestyle='--',
-                label=f'Thrust onset (after {total_latency*1000:.0f}ms latency)')
-ax1.axvline(ground_impact_time * 1000, color='black', linestyle=':', label='Ground impact')
+ax1.axvline(detection_time * 1000, color='orange', linestyle='--',
+            label=f'Detection ({h_detect}m)')
+ax1.axvline((detection_time + total_latency) * 1000, color='red', linestyle='--',
+            label=f'Thrust onset (+{total_latency*1000:.0f}ms latency)')
+ax1.axvline(ground_impact_time * 1000, color='black', linestyle=':', label='Ground')
 ax1.set_xlabel('Time from apogee (ms)')
 ax1.set_ylabel('Descent velocity (m/s)')
 ax1.set_title('Velocity vs Time')
 ax1.legend(fontsize=8)
 ax1.grid(True, alpha=0.3)
 
-# Plot 2: Altitude vs Velocity
+# Right: altitude vs velocity
 ax2.plot(velocities_arr, altitudes_arr, 'g-', linewidth=2)
-if detection_velocity:
-    ax2.axhline(h_detect, color='orange', linestyle='--', label=f'Detection altitude ({h_detect}m)')
-    ax2.axhline(0, color='black', linestyle=':', label='Ground')
-    ax2.plot(detection_velocity, h_detect, 'ro', markersize=8,
-             label=f'Detection point: {detection_velocity:.1f} m/s')
+ax2.axhline(h_detect, color='orange', linestyle='--',
+            label=f'Detection altitude ({h_detect}m)')
+ax2.axhline(0, color='black', linestyle=':', label='Ground')
+ax2.plot(detection_velocity, h_detect, 'ro', markersize=8,
+         label=f'Detection: {detection_velocity:.1f} m/s')
 ax2.set_xlabel('Descent velocity (m/s)')
 ax2.set_ylabel('Altitude (m)')
-ax2.set_title('Altitude vs Velocity (descent trajectory)')
+ax2.set_title('Altitude vs Velocity')
 ax2.legend(fontsize=8)
 ax2.grid(True, alpha=0.3)
 
 plt.tight_layout()
 plt.savefig('terminal_phase_sim.png', dpi=150, bbox_inches='tight')
 plt.show()
-print(f"\nPlot saved as terminal_phase_sim.png")
+print(f"\nPlot saved → terminal_phase_sim.png")
 ```
 
 ---
 
-## Part 6: Running Sensitivity Analysis
+## Part 6: Sensitivity Analysis
 
-One sim run at nominal values is not enough. You need to understand how the residual window changes with your key uncertainties. Add this loop after the main simulation:
+Run this as a **separate script** or append it to the bottom of `terminal_sim.py`. It sweeps apogee altitude and Cd to show you the full design space.
+
+Paste this into `sensitivity.py`:
 
 ```python
-# ─────────────────────────────────────────────
-# SENSITIVITY ANALYSIS
-# ─────────────────────────────────────────────
+import numpy as np
 
-print(f"\n{'='*60}")
-print(f"SENSITIVITY TABLE (residual window in ms)")
-print(f"{'='*60}")
-print(f"{'':20} {'Cd=0.4':>10} {'Cd=0.6':>10} {'Cd=0.8':>10}")
-print(f"{'─'*60}")
+# ═══════════════════════════════════════════════════════════════
+# COPY THESE EXACTLY FROM terminal_sim.py
+# ═══════════════════════════════════════════════════════════════
 
-for h_ap in [10.0, 15.0, 20.0]:   # apogee altitudes to test (meters)
-    results = []
-    for cd_test in [0.4, 0.6, 0.8]:
-        # Re-run sim with this apogee and Cd
-        v2, h2 = 0.0, h_ap
-        det_t2, imp_t2 = None, 0.0
-        t2 = 0.0
-        while h2 > 0:
-            fd = 0.5 * rho * v2**2 * cd_test * A
-            a2 = g - fd / m
-            v2 += a2 * dt
-            h2 -= v2 * dt
-            t2 += dt
-            if det_t2 is None and h2 <= h_detect:
-                det_t2 = t2
-            imp_t2 = t2
-        res = (imp_t2 - det_t2 - total_latency) * 1000 if det_t2 else float('nan')
-        results.append(f"{res:>10.0f}")
-    print(f"  Apogee {h_ap:.0f}m ({h_ap*3.281:.0f}ft)   {''.join(results)}")
+m        = 0.50
+diameter = 0.054
+A        = np.pi * (diameter / 2)**2
+h_detect = 3.0
+dt       = 0.001
+g        = 9.81
+rho      = 1.225
 
-print(f"\nNegative = FAIL. 0-100ms = marginal. 100-200ms = workable. >200ms = good.")
+t_loop   = 0.005
+t_mosfet = 0.001
+t_ematch = 0.050
+t_spool  = 0.050
+total_latency = t_loop + t_mosfet + t_ematch + t_spool
+
+# ═══════════════════════════════════════════════════════════════
+# SWEEP PARAMETERS  ← edit these ranges as needed
+# ═══════════════════════════════════════════════════════════════
+
+apogee_values = [10.0, 15.0, 20.0, 30.0]   # meters
+cd_values     = [0.4, 0.6, 0.8]            # drag coefficients
+
+# ═══════════════════════════════════════════════════════════════
+# SWEEP
+# ═══════════════════════════════════════════════════════════════
+
+def run_sim(h_ap, cd):
+    v, h, t = 0.0, h_ap, 0.0
+    det_t = imp_t = None
+    while h > 0:
+        fd  = 0.5 * rho * v**2 * cd * A
+        a   = g - fd / m
+        v  += a * dt
+        h  -= v * dt
+        t  += dt
+        if det_t is None and h <= h_detect:
+            det_t = t
+        imp_t = t
+    res_ms = (imp_t - det_t - total_latency) * 1000 if det_t else float('nan')
+    return res_ms
+
+print(f"\n{'='*62}")
+print(f"SENSITIVITY TABLE — residual window (ms)")
+print(f"Positive = margin remaining. Negative = FAIL.")
+print(f"{'='*62}")
+
+header = f"{'':22}" + "".join(f"  Cd={cd:.1f}" for cd in cd_values)
+print(header)
+print("─" * 62)
+
+for h_ap in apogee_values:
+    row = f"  Apogee {h_ap:.0f}m ({h_ap*3.281:.0f}ft)   "
+    for cd in cd_values:
+        res = run_sim(h_ap, cd)
+        flag = " ✗" if res < 0 else (" ?" if res < 100 else "")
+        row += f"  {res:>6.0f}ms{flag:<2}"
+    print(row)
+
+print(f"\n  < 0ms  = FAIL (architecture change required)")
+print(f"  0–100ms = marginal (measure all latency terms, raise apogee)")
+print(f"  100–200ms = workable (measure e-match, apply early bias)")
+print(f"  > 200ms = good margin")
 ```
 
-This table tells you how much your design depends on getting Cd right, and whether a lower-than-expected apogee breaks you.
+---
+
+## Part 7: Parameters at a Glance
+
+| Parameter | Starting value | How to refine | Sensitivity |
+|-----------|---------------|---------------|-------------|
+| Mass at landing | 500g | Weigh actual parts | High — affects fall rate directly |
+| Drag coefficient | 0.6 (run 0.4–0.8) | OpenRocket geometry model | Medium |
+| Body tube diameter | 54mm | Measure or spec sheet | Low (set by motor choice) |
+| Apogee altitude | 15m (50ft) | OpenRocket sim | High — biggest lever on window size |
+| Detection altitude | 3m (10ft) | Adjust from sensitivity table | High — core design variable |
+| IMU loop rate | 200Hz (5ms) | Measure with `micros()` in firmware | Medium |
+| E-match latency | 50ms (conservative) | Bench measurement with scope | High — single biggest variable |
+| Motor spool time | 50ms | thrustcurve.org thrust/weight calc | High |
 
 ---
 
-## Part 7: Design Decisions Summary — What You Need to Decide Before Running
+## Part 8: What to Do With the Results
 
-Here are the explicit choices you need to make. Some require research, some are estimates to start.
+**Residual > 200ms:** Good margin. Proceed to OpenRocket and hardware ordering.
 
-| Parameter | Starting value | How to refine | Impact if wrong |
-|-----------|---------------|---------------|-----------------|
-| Mass at landing | Estimate from specs | Weigh actual parts | High — directly affects fall rate |
-| Drag coefficient (Cd) | 0.6 (run 0.4–0.8) | OpenRocket model | Medium — affects terminal velocity |
-| Apogee altitude | 15m (50ft) | OpenRocket simulation | High — more apogee = more window |
-| Detection altitude | 3m (10ft) | Adjust based on results | High — core design variable |
-| Barometer OSR setting | x4 (20ms) | Empirical noise test with hardware | Medium — latency vs. noise tradeoff |
-| Teensy loop rate | 100Hz (10ms) | Measure with firmware | Medium |
-| E-match latency | 50ms (conservative) | Bench measurement with oscilloscope | High — single biggest latency term |
-| Motor spool time | 50ms | thrustcurve.org + thrust/weight calculation | High |
+**Residual 100–200ms:** Workable but tight. Before flying:
+1. Measure e-match latency empirically — you may recover 20–30ms.
+2. Implement abort logic: if IMU shows attitude error above threshold at detection altitude, suppress ignition.
+3. Apply early-ignition bias explicitly in the control law.
 
----
+**Residual < 100ms:** Architecture change before anything else. In order of effectiveness:
+- Raise `h_apogee` (more motor impulse, lighter airframe, or accept higher target altitude)
+- Raise `h_detect` (fire earlier — but verify the motor can still arrest descent from that higher altitude)
+- Run at 200Hz+ loop rate to reduce loop latency
 
-## Part 8: What to Do with the Results
-
-**If residual > 200ms:** You have margin. Proceed to OpenRocket modeling. Lock your detection altitude and document it as a design parameter.
-
-**If residual is 100–200ms:** Workable but sensitive. Two things to do before flying:
-1. Characterize your e-match latency empirically (biggest single variable) — you may buy back 20–30ms.
-2. Implement abort logic in the state machine: if IMU shows attitude error exceeding your threshold at detection altitude, suppress ignition.
-
-**If residual < 100ms:** Architecture change required before any other work. Options in order of effectiveness:
-- Increase detection altitude (fire earlier, from higher up)
-- Increase apogee target (requires motor change or weight reduction)
-- Add a small drogue chute to slow descent (adds complexity but dramatically increases window)
-- Reduce sensor latency (switch to a faster IMU-primary approach for terminal phase)
-
-**If residual is negative:** The project cannot work with this sensor stack at this altitude. This is not a failure — it's exactly what the simulation is for. You found it in week 1 rather than week 8.
+**Residual negative:** The design cannot work at this altitude with this sensor stack. This is exactly what the simulation is for — found in week 1, not week 8.
 
 ---
 
 ## Part 9: Research Checklist Before Running
 
-Before you run the simulation, look these up and fill in actual numbers:
-
-- [ ] **BMP388 datasheet** — confirm output data rate table for your chosen OSR setting
-- [ ] **Your motor's thrust curve** — download from thrustcurve.org (search your specific Estes motor part number). Find time-to-thrust-exceeds-weight.
-- [ ] **Estimated rocket mass** — list every component and its weight in grams. Estes publishes motor casing weights.
-- [ ] **Body tube outer diameter** — from your airframe supplier spec sheet
-- [ ] **Estimated apogee** — use a simple impulse/mass estimate or wait for OpenRocket. F15-0 in a 500g rocket: roughly 15–25m.
+- [ ] **Your motor's thrust curve** — download from thrustcurve.org (search your Estes motor part number). Find time-to-thrust > vehicle weight. This is `t_spool`.
+- [ ] **Estimated rocket mass** — list every component in grams. Estes publishes motor casing and propellant masses.
+- [ ] **Body tube outer diameter** — from your airframe supplier or Estes spec sheet.
+- [ ] **IMU datasheet** — confirm maximum output data rate at your chosen configuration. This sets your achievable loop rate.
+- [ ] **Apogee estimate** — F15-0 in a 500g rocket: roughly 15–25m. Use 15m to start; replace with OpenRocket once you have a model.
 
 ---
 
-*This guide is specific to this vehicle's constraints. The script is the deliverable — the guide explains every decision behind it.*
+*This guide is specific to this vehicle. The script is the deliverable — every parameter in it is a design decision or a measurement you need to make.*
