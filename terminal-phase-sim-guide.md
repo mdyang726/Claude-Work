@@ -221,32 +221,58 @@ import matplotlib.pyplot as plt
 # VEHICLE PARAMETERS  ← change these to match your rocket
 # ═══════════════════════════════════════════════════════════════
 
-m = 0.50          # kg — rocket mass at landing
-                  # = airframe + electronics + legs + landing motor (unfired)
-                  # NOTE: launch motor has ejected, so no launch motor mass here
-                  # HOW TO GET IT: weigh every component. Estes publishes motor casing
-                  # and propellant masses in their spec sheets.
+m = 0.35          # kg — rough estimate for a 3D-printed TVC rocket at 54mm diameter
+                  # Component breakdown (estimates):
+                  #   Airframe + nose cone + fins (PLA/PETG):  ~80g
+                  #   Teensy 4.0 + IMU + wiring:               ~30g
+                  #   Micro servo(s) for TVC gimbal:           ~20g
+                  #   LiPo battery (1S–2S):                    ~40g
+                  #   Landing motor (Estes F, unfired):        ~60g
+                  #   4× spring-loaded legs (stowed on ascent):~30g
+                  #   Misc hardware, connectors, pyro:         ~25g
+                  #                              Rough total: ~285g
+                  # Use 0.35 (350g) as a conservative/heavier starting estimate.
+                  # NOTE: launch motor has already ejected at this point — do not
+                  # include its mass here. Only the landing motor counts.
+                  # HOW TO REFINE: list every component and weigh it. Mass is the
+                  # parameter this sim is most sensitive to.
 
-Cd = 0.6          # drag coefficient during descent (dimensionless)
-                  # RANGE: run at 0.4 (optimistic), 0.6 (nominal), 0.8 (pessimistic)
-                  # WHY HIGHER THAN ASCENT: uncertain attitude during passive descent,
-                  # legs possibly partially deployed, launch motor casing ejected.
+Cd = 0.6          # drag coefficient during passive descent (dimensionless)
+                  # Legs are STOWED during ascent so ascent Cd is lower (~0.4).
+                  # For descent, legs are deployed — this increases Cd significantly.
+                  # Reasonable descent estimates:
+                  #   0.5 — legs deployed, nose-down attitude, clean shape
+                  #   0.7 — legs deployed, uncertain attitude (low-CoM pendulum)
+                  #   0.9 — worst case: tumbling or high-drag attitude
+                  # RUN THE SENSITIVITY ANALYSIS at 0.4 / 0.6 / 0.8.
                   # HOW TO REFINE: OpenRocket computes Cd from your geometry.
 
-diameter = 0.054  # m — outer diameter of body tube (0.054m = 54mm standard Estes)
-                  # HOW TO GET IT: measure your actual tube or check supplier spec sheet.
+diameter = 0.054  # m — 54mm outer diameter (standard Estes BT-60 equivalent)
+                  # WHY NOT 27mm: Estes F-class motors are 29mm OD. A 27mm tube
+                  # is narrower than the motor itself. Once you add a motor mount
+                  # and tube wall, minimum practical airframe is ~40mm for the
+                  # motor alone. The TVC gimbal and electronics push this further.
+                  # 54mm: tight but workable. Requires micro servos and compact
+                  #        electronics sled. Least drag penalty.
+                  # 75mm: easier to build and wire. More gimbal room. More drag.
+                  # Recommend starting at 54mm; go to 75mm only if the gimbal
+                  # geometry forces it during CAD.
 
 A = np.pi * (diameter / 2)**2   # reference area (m²) — computed automatically
 
-h_apogee = 15.0  # m — apogee altitude above ground
-                 # START WITH: 15m (≈50ft) as a pessimistic baseline.
-                 # Higher apogee = larger ignition window. This is a design variable —
-                 # don't treat the reference video's 30ft as a constraint.
-                 # HOW TO REFINE: OpenRocket simulation once you have a CAD model.
+h_apogee = 15.0  # m — apogee altitude above ground (15m ≈ 50ft)
+                 # This is a DESIGN VARIABLE, not a fixed constraint.
+                 # Higher apogee = larger ignition window (slower descent at ignition,
+                 # more time before ground impact). 30ft from the reference video was
+                 # that builder's constraint — you are not bound to it.
+                 # Plausible range for Estes F-class in a 350g rocket: 15–40m.
+                 # START WITH 15m (pessimistic). If the window is tight here, raise it.
+                 # HOW TO REFINE: OpenRocket once you have a CAD model.
 
-h_detect = 3.0   # m — IMU-integrated altitude at which ignition is triggered
-                 # THIS IS A DESIGN VARIABLE. Start at 3m. Sensitivity analysis
-                 # (Part 6) shows how changing this affects your window.
+h_detect = 3.0   # m — IMU-integrated altitude that triggers ignition
+                 # THIS IS A DESIGN VARIABLE. Start at 3m (≈10ft).
+                 # Sensitivity analysis (Part 6) shows how changing this trades off
+                 # window size against descent velocity at ignition.
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -433,7 +459,7 @@ import numpy as np
 # COPY THESE EXACTLY FROM terminal_sim.py
 # ═══════════════════════════════════════════════════════════════
 
-m        = 0.50
+m        = 0.35
 diameter = 0.054
 A        = np.pi * (diameter / 2)**2
 h_detect = 3.0
@@ -502,9 +528,9 @@ print(f"  > 200ms = good margin")
 
 | Parameter | Starting value | How to refine | Sensitivity |
 |-----------|---------------|---------------|-------------|
-| Mass at landing | 500g | Weigh actual parts | High — affects fall rate directly |
-| Drag coefficient | 0.6 (run 0.4–0.8) | OpenRocket geometry model | Medium |
-| Body tube diameter | 54mm | Measure or spec sheet | Low (set by motor choice) |
+| Mass at landing | ~350g (see breakdown in script) | Weigh actual parts | High — affects fall rate directly |
+| Drag coefficient | 0.6 descent (legs deployed); run 0.4–0.8 | OpenRocket geometry model | Medium |
+| Body tube diameter | 54mm (27mm is too small — motor is 29mm OD) | Set by gimbal CAD | Low once chosen |
 | Apogee altitude | 15m (50ft) | OpenRocket sim | High — biggest lever on window size |
 | Detection altitude | 3m (10ft) | Adjust from sensitivity table | High — core design variable |
 | IMU loop rate | 200Hz (5ms) | Measure with `micros()` in firmware | Medium |
